@@ -1,0 +1,172 @@
+                   
+				   
+				   Steps to restore a loss of controlfile using autobackup :-
+				   
+				   
+[oracle@ram trace]$ export ORACLE_SID=dbwr
+[oracle@ram trace]$ rman target /
+
+Recovery Manager: Release 19.0.0.0.0 - Production on Thu May 16 20:48:09 2019
+Version 19.2.0.0.0
+
+Copyright (c) 1982, 2019, Oracle and/or its affiliates.  All rights reserved.
+
+connected to target database: DBWR (DBID=1337475478)
+
+RMAN> show all;
+
+using target database control file instead of recovery catalog
+RMAN configuration parameters for database with db_unique_name DBWR are:
+CONFIGURE RETENTION POLICY TO REDUNDANCY 1; # default
+CONFIGURE BACKUP OPTIMIZATION OFF; # default
+CONFIGURE DEFAULT DEVICE TYPE TO DISK; # default
+CONFIGURE CONTROLFILE AUTOBACKUP ON; # default
+CONFIGURE CONTROLFILE AUTOBACKUP FORMAT FOR DEVICE TYPE DISK TO '%F'; # default
+CONFIGURE DEVICE TYPE DISK PARALLELISM 1 BACKUP TYPE TO BACKUPSET; # default
+CONFIGURE DATAFILE BACKUP COPIES FOR DEVICE TYPE DISK TO 1; # default
+CONFIGURE ARCHIVELOG BACKUP COPIES FOR DEVICE TYPE DISK TO 1; # default
+CONFIGURE MAXSETSIZE TO UNLIMITED; # default
+CONFIGURE ENCRYPTION FOR DATABASE OFF; # default
+CONFIGURE ENCRYPTION ALGORITHM 'AES128'; # default
+CONFIGURE COMPRESSION ALGORITHM 'BASIC' AS OF RELEASE 'DEFAULT' OPTIMIZE FOR LOAD TRUE ; # default
+CONFIGURE RMAN OUTPUT TO KEEP FOR 7 DAYS; # default
+CONFIGURE ARCHIVELOG DELETION POLICY TO NONE; # default
+CONFIGURE SNAPSHOT CONTROLFILE NAME TO '/u01/app/oracle/product/19.0.0/dbhome_1/dbs/snapcf_dbwr.f'; # default
+Step 2:- Simulate a failure when the database is running
+
+[oracle@ram trace]$ export ORACLE_SID=dbwr
+[oracle@ram trace]$ sqlplus / as sysdba
+
+SQL*Plus: Release 19.0.0.0.0 - Production on Thu May 16 20:49:00 2019
+Version 19.2.0.0.0
+
+Copyright (c) 1982, 2018, Oracle.  All rights reserved.
+
+
+Connected to:
+Oracle Database 19c Enterprise Edition Release 19.0.0.0.0 - Production
+Version 19.2.0.0.0
+
+SQL> select open_mode,name from v$database;
+
+OPEN_MODE	     NAME
+-------------------- ---------
+READ WRITE	     DBWR
+
+SQL> select name from v$controlfile;
+
+NAME
+--------------------------------------------------------------
+/u01/app/oracle/oradata/DBWR/controlfile/o1_mf_g91q1y86_.ctl
+/u01/app/oracle/fast_recovery_area/DBWR/controlfile/o1_mf_g91q1yow_.ctl
+
+SQL> !
+[oracle@ram trace]$ cd
+[oracle@ram ~]$ cd /u01/app/oracle/oradata/DBWR/controlfile/
+[oracle@ram controlfile]$ rm o1_mf_g91q1y86_.ctl 
+[oracle@ram controlfile]$ cd /u01/app/oracle/fast_recovery_area/DBWR/controlfile/
+[oracle@ram controlfile]$ rm o1_mf_g91q1yow_.ctl 
+[oracle@ram controlfile]$ sqlplus / as sysdba
+
+SQL*Plus: Release 19.0.0.0.0 - Production on Thu May 16 20:51:16 2019
+Version 19.2.0.0.0
+
+Copyright (c) 1982, 2018, Oracle.  All rights reserved.
+
+
+Connected to:
+Oracle Database 19c Enterprise Edition Release 19.0.0.0.0 - Production
+Version 19.2.0.0.0
+
+SQL> alter tablespace dbwrtbs add datafile '/u01/app/oracle/oradata/DBWR/dbwrtbs03.dbf' size 100m;
+alter tablespace dbwrtbs add datafile '/u01/app/oracle/oradata/DBWR/dbwrtbs03.dbf' size 100m
+*
+ERROR at line 1:
+ORA-00210: cannot open the specified control file
+ORA-00202: control file:
+'/u01/app/oracle/oradata/DBWR/controlfile/o1_mf_g91q1y86_.ctl'
+ORA-27041: unable to open file
+Linux-x86_64 Error: 2: No such file or directory
+Additional information: 3
+
+
+SQL> select status from v$instance;
+
+STATUS
+------------
+OPEN
+
+SQL> shut immediate
+ORA-00210: cannot open the specified control file
+ORA-00202: control file: '/u01/app/oracle/oradata/DBWR/controlfile/o1_mf_g91q1y86_.ctl'
+ORA-27041: unable to open file
+Linux-x86_64 Error: 2: No such file or directory
+Additional information: 3
+SQL> shut abort
+ORACLE instance shut down.
+Step 3:- Keep the database in NOMOUNT stage and restore the controlfile
+
+SQL> startup nomount;
+ORACLE instance started.
+
+Total System Global Area 1778381832 bytes
+Fixed Size		    8897544 bytes
+Variable Size		  536870912 bytes
+Database Buffers	 1224736768 bytes
+Redo Buffers		    7876608 bytes
+Step 4:- Since we are not using a RMAN catalog we need to set the DBID
+
+[oracle@ram controlfile]$ rman target /
+
+Recovery Manager: Release 19.0.0.0.0 - Production on Thu May 16 20:57:02 2019
+Version 19.2.0.0.0
+
+Copyright (c) 1982, 2019, Oracle and/or its affiliates.  All rights reserved.
+
+connected to target database: DBWR (not mounted)
+
+RMAN> set dbid=1337475478;
+
+executing command: SET DBID
+
+RMAN> restore controlfile from autobackup;
+
+Starting restore at 16-MAY-19
+using target database control file instead of recovery catalog
+allocated channel: ORA_DISK_1
+channel ORA_DISK_1: SID=38 device type=DISK
+
+channel ORA_DISK_1: looking for AUTOBACKUP on day: 20190516
+channel ORA_DISK_1: AUTOBACKUP found: c-1337475478-20190516-06
+channel ORA_DISK_1: restoring control file from AUTOBACKUP c-1337475478-20190516-06
+channel ORA_DISK_1: control file restore from AUTOBACKUP complete
+output file name=/u01/app/oracle/oradata/DBWR/controlfile/o1_mf_g91q1y86_.ctl
+output file name=/u01/app/oracle/fast_recovery_area/DBWR/controlfile/o1_mf_g91q1yow_.ctl
+Finished restore at 16-MAY-19
+Step 5:- Mount and recover the database
+
+RMAN> alter database mount;
+
+released channel: ORA_DISK_1
+Statement processed
+Step 6:- Restore a control file from a backup so we need to recover the database
+
+RMAN> recover database;
+
+Starting recover at 16-MAY-19
+using target database control file instead of recovery catalog
+allocated channel: ORA_DISK_1
+channel ORA_DISK_1: SID=39 device type=DISK
+
+starting media recovery
+
+archived log for thread 1 with sequence 1 is already on disk as file /u01/app/oracle/oradata/DBWR/onlinelog/o1_mf_1_gftzchjx_.log
+archived log file name=/u01/app/oracle/oradata/DBWR/onlinelog/o1_mf_1_gftzchjx_.log thread=1 sequence=1
+media recovery complete, elapsed time: 00:00:00
+Finished recover at 16-MAY-19
+Step 7:- Open the database using resetlogs option
+
+Use RESETLOGS after incomplete recovery (when the entire redo stream wasn’t applied). RESETLOGS will initialize the logs, reset your log sequence number, and start a new “incarnation” of the database.
+
+RMAN> alter database open resetlogs; 
+Statement processed
